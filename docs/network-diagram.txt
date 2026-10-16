@@ -1,0 +1,18 @@
+                       Ryu controller (host machine)
+                    OpenFlow TCP :6653 | Events TCP :6000
+                               |                ^
+                               |                | JSON lines
+          ----------------------------------------------------
+                               Open vSwitch s1
+                     local controller-event IP 10.0.0.254
+                     10 Mbit/s capped links + HTB queues
+              /        /         |        \          \
+             /        /          |         \          \
+           h1        h2         h3          h4          h5
+        client    client     client       chat       iperf
+       10.0.0.1  10.0.0.2   10.0.0.3     server      traffic
+                                        10.0.0.4     generator
+
+The controller event service is reachable at 10.0.0.254, assigned to the
+switch's local interface. Queue 1 is reserved for chat packets headed to h4;
+queue 0 carries other traffic, including the iperf flood.
