@@ -259,3 +259,4 @@ so chat prioritization is meaningful under load.
   and measurement runner.
 - [sdn/chat_qos_controller.py](sdn/chat_qos_controller.py): Ryu learning switch,
   chat flows, and event listener.
+- [network diagram](docs/network-diagram.txt).
