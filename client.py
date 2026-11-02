@@ -2,6 +2,7 @@ import base64
 import binascii
 import hashlib
 import os
+import readline
 import socket
 import sys
 import threading
@@ -21,7 +22,12 @@ from config import PORT
 name = ""
 room = ""
 state_lock = threading.Lock()
+console_lock = threading.Lock()
+console_input_active = False
+console_input_prompt = ""
+deferred_output = []
 registration_reply = threading.Event()
+join_reply = threading.Event()
 public_keys = {}
 trusted_keys = {}
 demo_mode = False
@@ -36,15 +42,42 @@ def color(text, code):
     return "\033[" + code + "m" + text + "\033[0m"
 
 
-def prompt():
-    with state_lock:
-        current_name = name
-        current_room = room
-    if current_name and current_room:
-        return current_name + "@" + current_room + " > "
-    if current_name:
-        return current_name + " > "
-    return "> "
+def console_print(text):
+    with console_lock:
+        if console_input_active:
+            if sys.stdin.isatty() and sys.stdout.isatty():
+                line_buffer = readline.get_line_buffer()
+                sys.stdout.write(
+                    "\r\033[2K"
+                    + text
+                    + "\n"
+                    + console_input_prompt
+                    + line_buffer
+                )
+                sys.stdout.flush()
+            else:
+                deferred_output.append(text)
+            return
+        print(text, flush=True)
+
+
+def console_input(prompt_text):
+    global console_input_active, console_input_prompt
+    with console_lock:
+        if deferred_output:
+            print("\n".join(deferred_output), flush=True)
+            deferred_output.clear()
+        console_input_prompt = prompt_text
+        console_input_active = True
+    try:
+        return input(prompt_text)
+    finally:
+        with console_lock:
+            console_input_active = False
+            console_input_prompt = ""
+            if deferred_output:
+                print("\n" + "\n".join(deferred_output), flush=True)
+                deferred_output.clear()
 
 
 def show_line(line):
@@ -124,7 +157,11 @@ def receive_public_key(line):
         public_keys[peer] = peer_key
         if previous_key and previous_key != peer_key:
             trusted_keys.pop(peer, None)
+        if demo_mode:
+            trusted_keys[peer] = key_fingerprint(peer_key)
     fingerprint = key_fingerprint(peer_key)
+    if demo_mode:
+        return "* " + peer + " encryption key received (demo auto-trust enabled)"
     if previous_key and previous_key != peer_key:
         return color(
             "WARNING: " + peer + "'s key changed. Verify fingerprint: "
@@ -151,32 +188,32 @@ def receive_private_message(line):
     except (InvalidTag, ValueError, UnicodeDecodeError, binascii.Error):
         return color("ERR private-message authentication failed", "31")
     if demo_mode:
-        print(
-            "\r\033[2K"
-            + "* Demo: decrypted at this client; session-key fingerprint: "
+        return (
+            color("[pm from " + sender + "] " + message, "35")
+            + "\n* Demo: message decrypted; session-key fingerprint: "
             + key_fingerprint(key)
         )
     return color("[pm from " + sender + "] " + message, "35")
 
 
-def send_private_message(sock, recipient, message, demo=False):
+def send_private_message(sock, recipient, message):
     with state_lock:
         sender = name
         peer_key = public_keys.get(recipient)
         trusted_fingerprint = trusted_keys.get(recipient)
     if not sender:
-        print(color("Register before sending private messages.", "31"))
+        console_print(color("Register before sending private messages.", "31"))
         return
     if not peer_key:
-        print(color("No public key received for " + recipient + " yet.", "31"))
+        console_print(color("No public key received for " + recipient + " yet.", "31"))
         return
     fingerprint = key_fingerprint(peer_key)
-    if trusted_fingerprint != fingerprint:
-        print(
+    if not demo_mode and trusted_fingerprint != fingerprint:
+        console_print(
             color(
                 "Unverified key for " + recipient
-                + ". Compare /keys out of band, then use /trust "
-                + recipient + " " + fingerprint,
+                + ". Compare the fingerprint out of band, then use the "
+                "peer-key menu option to trust it.",
                 "31",
             )
         )
@@ -186,17 +223,22 @@ def send_private_message(sock, recipient, message, demo=False):
             sender, recipient, message, peer_key
         )
     except ValueError as error:
-        print(color("Could not encrypt private message: " + str(error), "31"))
-        return
-    if demo or demo_mode:
-        print("* Demo: recipient public-key fingerprint: " + fingerprint)
-        print(
-            "* Demo: X25519 + HKDF-SHA256 session-key fingerprint: "
-            + key_fingerprint(key)
+        console_print(
+            color("Could not encrypt private message: " + str(error), "31")
         )
-        print("* Demo: ChaCha20-Poly1305 nonce: " + nonce.hex())
-        print("* Demo: ciphertext sent to server (base64): " + payload)
-        print("* Demo: server command: PM " + recipient + " " + payload)
+        return
+    if demo_mode:
+        console_print(
+            "\n".join(
+                (
+                    "* Demo: X25519 + HKDF-SHA256 session-key fingerprint: "
+                    + key_fingerprint(key),
+                    "* Demo: ChaCha20-Poly1305 nonce: " + nonce.hex(),
+                    "* Demo: ciphertext sent to server (base64): " + payload,
+                    "* Demo: server command: PM " + recipient + " " + payload,
+                )
+            )
+        )
     send_line(sock, "PM " + recipient + " " + payload)
 
 
@@ -207,10 +249,10 @@ def receive_messages(sock):
         try:
             data = sock.recv(1024)
         except OSError as error:
-            print("\nConnection error:", error)
+            console_print("Connection error: " + str(error))
             return
         if not data:
-            print("\nServer disconnected")
+            console_print("Server disconnected.")
             return
         buffer += data
         while b"\n" in buffer:
@@ -223,16 +265,74 @@ def receive_messages(sock):
                     room = line[len("OK joined "):]
             if line.startswith("OK registered as ") or line.startswith("ERR "):
                 registration_reply.set()
+            if line.startswith("OK joined ") or line.startswith("ERR "):
+                join_reply.set()
             if line.startswith("KEY "):
                 line = receive_public_key(line)
             elif line.startswith("PMFROM "):
                 line = receive_private_message(line)
-            print("\r\033[2K" + show_line(line))
-            print(prompt(), end="", flush=True)
+            elif line.startswith("OK registered as "):
+                line = "Signed in as " + line[len("OK registered as "):] + "."
+            elif line.startswith("OK joined "):
+                line = "Joined room #" + line[len("OK joined "):] + "."
+            elif line == "OK message sent":
+                line = "Room message sent."
+            elif line == "OK private message sent":
+                line = "Private message sent securely."
+            elif line.startswith("ERR "):
+                line = color("Error: " + line[len("ERR "):], "31")
+            console_print(show_line(line))
 
 
 def send_line(sock, message):
     sock.sendall((message + "\n").encode())
+
+
+def trust_peer_interactively():
+    with state_lock:
+        known_keys = list(public_keys.items())
+        trusted = dict(trusted_keys)
+    if not known_keys:
+        console_print("No peer keys received yet. Wait for another user to join.")
+        return
+    untrusted = [
+        (peer, peer_key)
+        for peer, peer_key in known_keys
+        if trusted.get(peer) != key_fingerprint(peer_key)
+    ]
+    if not untrusted:
+        console_print("All currently known peer keys are trusted.")
+        return
+    console_print(
+        "Compare a peer's fingerprint through a separate trusted channel."
+    )
+    for number, (peer, peer_key) in enumerate(untrusted, 1):
+        console_print(str(number) + ") " + peer + ": " + key_fingerprint(peer_key))
+    try:
+        choice = int(console_input("Peer number to trust [0 cancels]: "))
+    except ValueError:
+        console_print("Enter one of the listed peer numbers.")
+        return
+    if choice == 0:
+        return
+    if not 1 <= choice <= len(untrusted):
+        console_print("Enter one of the listed peer numbers.")
+        return
+    peer, peer_key = untrusted[choice - 1]
+    confirmation = console_input(
+        "Does this fingerprint match your trusted check? Type YES to trust: "
+    ).strip()
+    if confirmation != "YES":
+        console_print("Peer key was not trusted.")
+        return
+    with state_lock:
+        if public_keys.get(peer) != peer_key:
+            console_print(
+                color("Peer key changed; review it again before trusting.", "31")
+            )
+            return
+        trusted_keys[peer] = key_fingerprint(peer_key)
+    console_print("* Trusted " + peer + "'s public key for this session.")
 
 
 def main():
@@ -250,97 +350,135 @@ def main():
         print("Could not connect:", error)
         return
 
-    print("=== SDN Chat ===  server " + server_ip + ":" + str(PORT))
-    print("Type /help for commands.\n")
+    console_print("=== SDN Chat ===")
+    console_print("Server: " + server_ip + ":" + str(PORT))
     if demo_mode:
-        print("Crypto demo mode: keys and ciphertext details will be shown.")
+        console_print(
+            "Crypto demo: peer keys are trusted automatically for this session."
+        )
+        console_print(
+            color(
+                "Use only in a trusted lab: a malicious server can substitute keys.",
+                "33",
+            )
+        )
+    console_print("")
     receiver = threading.Thread(target=receive_messages, args=(sock,), daemon=True)
     receiver.start()
-    print(prompt(), end="", flush=True)
 
     try:
         while True:
             try:
-                text = input()
-            except EOFError:
-                text = "/quit"
-            if text == "/help":
-                print(
-                    "/register name, /join room, /pm name message, "
-                    "/pm-demo name message, /keys, "
-                    "/trust name fingerprint, /quit"
-                )
-                print("Anything else is sent to your room.")
-            elif text == "/keys":
                 with state_lock:
-                    known_keys = list(public_keys.items())
-                    trusted = dict(trusted_keys)
-                if not known_keys:
-                    print("No peer keys received yet.")
-                for peer, peer_key in known_keys:
-                    status = (
-                        "trusted"
-                        if trusted.get(peer) == key_fingerprint(peer_key)
-                        else "not verified"
-                    )
-                    print(peer + ": " + key_fingerprint(peer_key) + " (" + status + ")")
-            elif text.startswith("/trust "):
-                peer, separator, fingerprint = text[len("/trust "):].partition(
-                    " "
-                )
+                    registered = bool(name)
+                if not registered:
+                    username = console_input(
+                        "Choose a display name (for example, alice): "
+                    ).strip()
+                    if not username:
+                        console_print(
+                            "A display name is required. Please try again."
+                        )
+                        continue
+                    registration_reply.clear()
+                    send_line(sock, "REGISTER " + username + " " + public_key_text)
+                    if not registration_reply.wait(timeout=5):
+                        console_print(color(
+                            "No response from the server. Check the connection "
+                            "and try again.",
+                            "31",
+                        ))
+                        continue
+                    with state_lock:
+                        registered = bool(name)
+                    if not registered:
+                        continue
+
                 with state_lock:
-                    peer_key = public_keys.get(peer)
-                    if (
-                        separator
-                        and peer_key
-                        and fingerprint == key_fingerprint(peer_key)
-                    ):
-                        trusted_keys[peer] = fingerprint
-                        trusted = True
+                    joined = bool(room)
+                if not joined:
+                    room_name = console_input(
+                        "Choose a room name (for example, room1): "
+                    ).strip()
+                    if not room_name:
+                        console_print("A room name is required. Please try again.")
+                        continue
+                    join_reply.clear()
+                    send_line(sock, "JOIN " + room_name)
+                    if not join_reply.wait(timeout=5):
+                        console_print(color(
+                            "No response while joining the room. Try again.",
+                            "31",
+                        ))
+                        continue
+                    with state_lock:
+                        joined = bool(room)
+                    if not joined:
+                        continue
+
+                with state_lock:
+                    current_name = name
+                    current_room = room
+                console_print(
+                    "\n=== " + current_name + " | room #" + current_room + " ===\n"
+                    "1) Send a message to this room\n"
+                    "2) Send an encrypted private message\n"
+                    "3) Switch to another room\n"
+                    "4) Review or trust a peer's encryption key\n"
+                    "5) Quit"
+                )
+                choice = console_input("Select an action [1-5]: ").strip()
+                if choice == "1":
+                    message = console_input(
+                        "Room message (leave blank to cancel): "
+                    ).strip()
+                    if message:
+                        send_line(sock, "MSG " + message)
                     else:
-                        trusted = False
-                if trusted:
-                    print("* Trusted " + peer + "'s public key for this session.")
+                        console_print("Room message cancelled.")
+                elif choice == "2":
+                    recipient = console_input(
+                        "Recipient's online display name "
+                        "(leave blank to cancel): "
+                    ).strip()
+                    if not recipient:
+                        console_print("Private message cancelled.")
+                        continue
+                    message = console_input(
+                        "Private message to " + recipient
+                        + " (leave blank to cancel): "
+                    ).strip()
+                    if recipient and message:
+                        send_private_message(sock, recipient, message)
+                    else:
+                        console_print("Private message cancelled.")
+                elif choice == "3":
+                    room_name = console_input(
+                        "New room name (leave blank to stay in #"
+                        + current_room + "): "
+                    ).strip()
+                    if room_name:
+                        join_reply.clear()
+                        send_line(sock, "JOIN " + room_name)
+                        if not join_reply.wait(timeout=5):
+                            console_print(color(
+                                "No response while switching rooms. Try again.",
+                                "31",
+                            ))
+                    else:
+                        console_print("Room switch cancelled.")
+                elif choice == "4":
+                    trust_peer_interactively()
+                elif choice == "5":
+                    send_line(sock, "QUIT")
+                    break
                 else:
-                    print(color(
-                        "Fingerprint does not match /keys for an online user.",
-                        "31",
-                    ))
-            elif text == "/quit":
+                    console_print("Enter a number from 1 to 5.")
+            except EOFError:
                 send_line(sock, "QUIT")
                 break
-            elif text.startswith("/register "):
-                registration_reply.clear()
-                send_line(
-                    sock,
-                    "REGISTER " + text[len("/register "):]
-                    + " " + public_key_text,
-                )
-                if not registration_reply.wait(timeout=5):
-                    print(color("No response to registration.", "31"))
-            elif text.startswith("/join "):
-                send_line(sock, "JOIN " + text[len("/join "):])
-            elif text.startswith("/pm-demo "):
-                recipient, separator, message = text[len("/pm-demo "):].partition(
-                    " "
-                )
-                if not separator or not recipient or not message:
-                    print(color("Use /pm-demo name message.", "31"))
-                else:
-                    send_private_message(sock, recipient, message, demo=True)
-            elif text.startswith("/pm "):
-                recipient, separator, message = text[len("/pm "):].partition(" ")
-                if not separator or not recipient or not message:
-                    print(color("Use /pm name message.", "31"))
-                else:
-                    send_private_message(sock, recipient, message)
-            elif text.startswith("/"):
-                print(color("Unknown command. Type /help for commands.", "31"))
-            elif text:
-                send_line(sock, "MSG " + text)
-            print(prompt(), end="", flush=True)
     except OSError as error:
-        print("\nConnection error:", error)
+        console_print("Connection error: " + str(error))
     finally:
         try:
             sock.shutdown(socket.SHUT_WR)

@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import os
+import shutil
 import socket
 import statistics
 import subprocess
@@ -129,6 +130,32 @@ def stop_network(network, server):
         server.terminate()
         server.wait(timeout=3)
     network.stop()
+
+
+def launch_chat_clients(network):
+    xterm = shutil.which("xterm")
+    if not xterm:
+        raise RuntimeError("xterm is required for the automatic chat terminals")
+    if not os.environ.get("DISPLAY"):
+        raise RuntimeError("A graphical display is required to open xterm windows")
+
+    client_python = os.path.join(PROJECT_DIR, ".venv-sdn", "bin", "python")
+    if not os.path.isfile(client_python):
+        raise RuntimeError("Run setup_osken_env.sh before starting the chat lab")
+    client = os.path.join(PROJECT_DIR, "client.py")
+    for host_name in ("h1", "h2", "h3"):
+        network.get(host_name).popen(
+            [
+                xterm,
+                "-T",
+                "Chat " + host_name,
+                "-e",
+                client_python,
+                client,
+                SERVER_IP,
+                "--crypto-demo",
+            ]
+        )
 
 
 def read_line(sock, buffer):
@@ -365,6 +392,8 @@ def main():
     network, server = start_network(args.mode)
     print("Chat server running on h4 at", SERVER_IP + ":" + str(PORT))
     try:
+        if args.action == "lab":
+            launch_chat_clients(network)
         CLI(network)
     finally:
         stop_network(network, server)
