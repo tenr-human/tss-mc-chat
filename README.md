@@ -68,28 +68,6 @@ Type `exit` at the Mininet prompt when you are done. If a lab stops without
 cleaning up, run `sudo mn -c` before starting another one. Press **Ctrl+C** in
 the controller terminal to stop OS-Ken.
 
-## View traffic in Wireshark
-
-Start the SDN lab and send some chat messages. In another terminal, capture
-traffic on the switch port connected to the chat server:
-
-```sh
-sudo tcpdump -i s1-eth4 -w chat-lab.pcap \
-  'tcp port 5000 or tcp port 5001'
-```
-
-Press **Ctrl+C** to stop the capture, then open it in Wireshark:
-
-```sh
-wireshark chat-lab.pcap
-```
-
-Use the display filter `tcp.port == 5000 || tcp.port == 5001` to show chat and
-iperf traffic. In Wireshark, **Statistics → I/O Graphs** can show when packets
-were sent. A packet capture helps show network activity, but it does not
-replace the latency measurements saved in `results.csv`. Private-message text
-is encrypted and will not appear as readable text.
-
 ## Private messages
 
 Choose **Send an encrypted private message**, then enter the other person's
@@ -124,7 +102,8 @@ sudo ovs-ofctl -O OpenFlow13 dump-flows s1
 
 ## Measure the network
 
-Make sure the controller is running and no other Mininet lab is open. Run:
+1. Start the OS-Ken controller as described above. Close any other Mininet lab.
+2. Run the tests:
 
 ```sh
 sudo mn -c
@@ -132,9 +111,46 @@ sudo python3 mininet_lab.py measure --mode sdn \
   --clients 10 50 100 --runs 5 --output results.csv
 ```
 
-This runs baseline and SDN tests, with and without an `iperf` flood. Results
-are saved to `results.csv` and `results_summary.csv`. Use `--mode baseline` for
-baseline-only tests. Use a new output file name if you want to keep old results.
+This tests both baseline and SDN, with and without an `iperf` flood. Add
+`--mode baseline` to test only the baseline. Use a new output name to keep
+previous results.
+
+3. Check the results:
+
+- `results.csv` and `results_summary.csv` contain chat latency.
+- `results_pcap_results.csv` and `results_pcap_summary.csv` contain packet and
+  captured-link throughput.
+- `results_pcap_timeseries.csv` contains throughput by second.
+- PCAP captures are saved in `results_pcaps/`.
+
+4. Make graphs from the CSV files:
+
+```sh
+python3 generate_graphs.py
+```
+
+This creates `results_graphs/chat_latency.svg`. If PCAP results exist, it also
+creates `results_graphs/pcap_throughput.svg`. Run it again after new tests to
+update the graphs. The chat latency graph below uses the saved summary data;
+run new tests after changing the network setup.
+
+![Chat latency for the saved baseline and SDN results](results_graphs/chat_latency.svg)
+
+In the saved results, SDN is faster in some cases and slower in others. Rerun
+the tests before drawing conclusions about the updated network setup.
+
+The PCAP measurements need `tcpdump` and `tshark`. Open a capture in Wireshark:
+
+```sh
+wireshark results_pcaps/sdn_clients-50_flood-true_run-1_*.pcap
+```
+
+Use `tcp.port == 5000 || tcp.port == 5001` to show chat and iperf traffic.
+Choose **Statistics → I/O Graphs** to view throughput over time. PCAPs show
+traffic; the CSV files contain the measured values. Captured-link throughput
+includes all packets on the chat server link, including iperf traffic when
+enabled. The saved latency data is from the current recorded runs; run new
+tests after changing the network setup.
 
 ## Main files
 
@@ -143,8 +159,12 @@ baseline-only tests. Use a new output file name if you want to keep old results.
 - `mininet_lab.py`: Mininet lab and measurement commands
 - `config.py`: network settings
 - `setup_osken_env.sh`: environment setup
+- `generate_graphs.py`: makes graphs from the measurement CSV files
 
 ## Network diagram
+
+The five hosts connect to one switch. OS-Ken controls the switch during SDN
+tests.
 
 ```mermaid
 flowchart TB
