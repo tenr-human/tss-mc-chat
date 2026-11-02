@@ -9,6 +9,7 @@ users. The lab can also compare the network with and without the controller.
 - Linux, Python 3, Mininet, Open vSwitch, and `iperf`
 - `sudo` access
 - `xterm` and a graphical display for the interactive lab
+- Optional: `tcpdump` and Wireshark to capture and view packets
 
 ## Set up
 
@@ -67,6 +68,28 @@ Type `exit` at the Mininet prompt when you are done. If a lab stops without
 cleaning up, run `sudo mn -c` before starting another one. Press **Ctrl+C** in
 the controller terminal to stop OS-Ken.
 
+## View traffic in Wireshark
+
+Start the SDN lab and send some chat messages. In another terminal, capture
+traffic on the switch port connected to the chat server:
+
+```sh
+sudo tcpdump -i s1-eth4 -w chat-lab.pcap \
+  'tcp port 5000 or tcp port 5001'
+```
+
+Press **Ctrl+C** to stop the capture, then open it in Wireshark:
+
+```sh
+wireshark chat-lab.pcap
+```
+
+Use the display filter `tcp.port == 5000 || tcp.port == 5001` to show chat and
+iperf traffic. In Wireshark, **Statistics → I/O Graphs** can show when packets
+were sent. A packet capture helps show network activity, but it does not
+replace the latency measurements saved in `results.csv`. Private-message text
+is encrypted and will not appear as readable text.
+
 ## Private messages
 
 Choose **Send an encrypted private message**, then enter the other person's
@@ -120,4 +143,31 @@ baseline-only tests. Use a new output file name if you want to keep old results.
 - `mininet_lab.py`: Mininet lab and measurement commands
 - `config.py`: network settings
 - `setup_osken_env.sh`: environment setup
-- [Network diagram](docs/network-diagram.md)
+
+## Network diagram
+
+```mermaid
+flowchart TB
+    controller["OS-Ken controller<br/>OpenFlow: TCP 6653<br/>Chat events: TCP 6000"]
+    switch["Open vSwitch s1<br/>Local IP: 10.0.0.254<br/>10 Mbit/s links with HTB queues"]
+    controller <-->|"OpenFlow"| switch
+
+    subgraph hosts["Mininet hosts"]
+        h1["h1<br/>Chat client<br/>10.0.0.1"]
+        h2["h2<br/>Chat client<br/>10.0.0.2"]
+        h3["h3<br/>Chat client<br/>10.0.0.3"]
+        h4["h4<br/>Chat server<br/>10.0.0.4"]
+        h5["h5<br/>iperf traffic<br/>10.0.0.5"]
+    end
+
+    switch --- h1
+    switch --- h2
+    switch --- h3
+    switch --- h4
+    switch --- h5
+    h4 -. "JSON events to 10.0.0.254:6000" .-> controller
+    note["Queue 1 prioritizes chat traffic to h4.<br/>Queue 0 carries other traffic, including iperf."]
+    switch --- note
+```
+
+See [network-diagram.md](docs/network-diagram.md) for the standalone diagram.
