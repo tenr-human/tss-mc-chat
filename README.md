@@ -1,7 +1,7 @@
 # SDN Multi-Client Chat
 
 A newline-delimited TCP chat app and a small Mininet/Open vSwitch network.
-Ryu can learn switch addresses, prioritize registered chat connections, and
+OS-Ken can learn switch addresses, prioritize registered chat connections, and
 block a named user. A measurement command compares the SDN switch with a
 standalone learning switch.
 
@@ -9,7 +9,7 @@ standalone learning switch.
 
 - Linux with Python 3, Mininet, Open vSwitch, and `iperf`.
 - `sudo` access for Mininet and OVS.
-- Ryu and the encrypted chat clients use the project-local Python 3.12
+- OS-Ken and the encrypted chat clients use the project-local Python 3.12
   environment. The chat server and Mininet scripts use system `python3`.
 - The client uses the `cryptography` package for private-message encryption;
   the setup script installs it in `.venv-sdn`.
@@ -20,10 +20,10 @@ standalone learning switch.
 From the project directory, run the helper script:
 
 ```sh
-source setup_ryu_env.sh
+source setup_osken_env.sh
 ```
 
-This installs `uv`, creates or reuses `.venv-sdn`, and installs the Ryu
+This installs `uv`, creates or reuses `.venv-sdn`, and installs OS-Ken
 packages from `requirements-sdn.txt` and the chat crypto package from
 `requirements-chat.txt`. It also adds the local `~/.local/bin` path and the
 xterm library path to the current shell when it is sourced.
@@ -31,7 +31,7 @@ xterm library path to the current shell when it is sourced.
 If you prefer a one-off run instead of sourcing it:
 
 ```sh
-bash setup_ryu_env.sh
+bash setup_osken_env.sh
 ```
 
 Then activate the environment in your shell:
@@ -77,8 +77,8 @@ The controller runs in the host network namespace. Start it from the project
 directory in its own terminal:
 
 ```sh
-./.venv-sdn/bin/python sdn/chat_qos_controller.py \
-  --ofp-tcp-listen-port 6653 sdn/chat_qos_controller.py
+./.venv-sdn/bin/osken-manager --ofp-tcp-listen-port 6653 \
+  sdn/chat_qos_controller.py
 ```
 
 Leave that terminal open. In another terminal, clean up old Mininet state and
@@ -106,7 +106,7 @@ In each xterm, run:
 
 Register a different name in each window and join the same room. To use the
 plain OVS learning-switch baseline instead, run
-`python3 mininet_lab.py lab --mode baseline`. The baseline does not need Ryu.
+`python3 mininet_lab.py lab --mode baseline`. The baseline does not need OS-Ken.
 
 Exit the Mininet prompt with `exit` before starting another Mininet command.
 The interactive lab and measurement runner both create interfaces named
@@ -117,7 +117,7 @@ The interactive lab and measurement runner both create interfaces named
 sudo mn -c
 ```
 
-To stop Ryu, press **Ctrl+C** in its terminal.
+To stop OS-Ken, press **Ctrl+C** in its terminal.
 
 ## Private-message encryption demo
 
@@ -225,7 +225,7 @@ mininet> h5 iperf -c 10.0.0.4 -p 5001 -t 60
 
 ## Measure baseline versus SDN
 
-Make sure Ryu is running, and no interactive Mininet lab is open. From a host
+Make sure OS-Ken is running, and no interactive Mininet lab is open. From a host
 terminal:
 
 ```sh
@@ -255,8 +255,10 @@ so chat prioritization is meaningful under load.
 - [config.py](config.py): IP addresses, ports, bandwidth, and queue settings.
 - [requirements-chat.txt](requirements-chat.txt): cryptography dependency for
   encrypted private messages.
+- [requirements-sdn.txt](requirements-sdn.txt): pinned OS-Ken dependencies.
+- [setup_osken_env.sh](setup_osken_env.sh): project Python environment setup.
 - [mininet_lab.py](mininet_lab.py): topology, interactive lab, policy commands,
   and measurement runner.
-- [sdn/chat_qos_controller.py](sdn/chat_qos_controller.py): Ryu learning switch,
+- [sdn/chat_qos_controller.py](sdn/chat_qos_controller.py): OS-Ken learning switch,
   chat flows, and event listener.
 - [network diagram](docs/network-diagram.txt).

@@ -1,30 +1,22 @@
-import eventlet
-
-eventlet.monkey_patch()
-
 import json
-import eventlet.wsgi
 import os
-import socket
 import sys
-import threading
-
-if not hasattr(eventlet.wsgi, "ALREADY_HANDLED"):
-    eventlet.wsgi.ALREADY_HANDLED = object()
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from ryu.base import app_manager
-from ryu.controller import event, ofp_event
-from ryu.controller.handler import (
+from os_ken.base import app_manager
+from os_ken.controller import event, ofp_event
+from os_ken.controller.handler import (
     CONFIG_DISPATCHER,
     DEAD_DISPATCHER,
     MAIN_DISPATCHER,
     set_ev_cls,
 )
-from ryu.ofproto import ofproto_v1_3
+from os_ken.lib import hub
+from os_ken.lib.packet import ethernet, ether_types, packet
+from os_ken.ofproto import ofproto_v1_3
 
 from config import (
     CHAT_QUEUE_ID,
@@ -39,11 +31,11 @@ from config import (
 
 class ChatEvent(event.EventBase):
     def __init__(self, data):
-        super().__init__()
+        super(ChatEvent, self).__init__()
         self.data = data
 
 
-class ChatQoSController(app_manager.RyuApp):
+class ChatQoSController(app_manager.OSKenApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
@@ -52,40 +44,44 @@ class ChatQoSController(app_manager.RyuApp):
         self.users = {}
         self.blocked_users = set()
         self.mac_to_port = {}
-        listener = threading.Thread(target=self.listen_for_events, daemon=True)
-        listener.start()
+        self.event_server = hub.StreamServer(
+            (CONTROLLER_EVENT_BIND, CONTROLLER_EVENT_PORT),
+            self.handle_chat_connection,
+        )
+        hub.spawn(self.event_server.serve_forever)
+        self.logger.info(
+            "Listening for chat events on %s:%s",
+            CONTROLLER_EVENT_BIND,
+            CONTROLLER_EVENT_PORT,
+        )
 
-    def listen_for_events(self):
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind((CONTROLLER_EVENT_BIND, CONTROLLER_EVENT_PORT))
-        server.listen()
-        server.settimeout(1)
-        self.logger.info("Listening for chat events on port %s", CONTROLLER_EVENT_PORT)
-        while True:
-            try:
-                conn, address = server.accept()
-            except socket.timeout:
-                continue
-            except OSError as error:
-                self.logger.error("Chat event listener stopped: %s", error)
-                return
-            with conn:
-                buffer = b""
-                try:
-                    while True:
-                        data = conn.recv(4096)
-                        if not data:
-                            break
-                        buffer += data
-                        while b"\n" in buffer:
-                            raw_event, buffer = buffer.split(b"\n", 1)
-                            self.send_event(
-                                self.name,
-                                ChatEvent(json.loads(raw_event.decode())),
-                            )
-                except (OSError, ValueError) as error:
-                    self.logger.error("Bad chat event from %s: %s", address, error)
+    def handle_chat_connection(self, conn, address):
+        buffer = b""
+        try:
+            while True:
+                data = conn.recv(4096)
+                if not data:
+                    break
+                buffer += data
+                while b"\n" in buffer:
+                    raw_event, buffer = buffer.split(b"\n", 1)
+                    if not raw_event.strip():
+                        continue
+                    try:
+                        message = json.loads(raw_event.decode("utf-8"))
+                        if not isinstance(message, dict):
+                            raise ValueError("event must be a JSON object")
+                        self.send_event(self.name, ChatEvent(message))
+                    except (UnicodeDecodeError, ValueError) as error:
+                        self.logger.warning(
+                            "Invalid chat event from %s: %s", address, error
+                        )
+        except OSError as error:
+            self.logger.warning(
+                "Chat event connection from %s failed: %s", address, error
+            )
+        finally:
+            conn.close()
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_ready(self, ev):
@@ -94,8 +90,14 @@ class ChatQoSController(app_manager.RyuApp):
         parser = datapath.ofproto_parser
         ofproto = datapath.ofproto
         match = parser.OFPMatch()
-        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
-        instructions = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        actions = [
+            parser.OFPActionOutput(
+                ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER
+            )
+        ]
+        instructions = [
+            parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)
+        ]
         flow = parser.OFPFlowMod(
             datapath=datapath,
             priority=0,
@@ -117,13 +119,21 @@ class ChatQoSController(app_manager.RyuApp):
             )
         )
         for username, user in self.users.items():
-            if user["event"] == "join":
-                self.install_user_flow(datapath, user, username in self.blocked_users)
+            if user.get("event") == "join":
+                self.install_user_flow(
+                    datapath, user, username in self.blocked_users
+                )
 
-    @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, DEAD_DISPATCHER])
+    @set_ev_cls(
+        ofp_event.EventOFPStateChange,
+        [MAIN_DISPATCHER, DEAD_DISPATCHER],
+    )
     def switch_disconnected(self, ev):
-        if ev.state == DEAD_DISPATCHER:
+        if ev.state == MAIN_DISPATCHER:
+            self.datapaths[ev.datapath.id] = ev.datapath
+        elif ev.state == DEAD_DISPATCHER:
             self.datapaths.pop(ev.datapath.id, None)
+            self.mac_to_port.pop(ev.datapath.id, None)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def learn_switch(self, ev):
@@ -131,10 +141,12 @@ class ChatQoSController(app_manager.RyuApp):
         datapath = msg.datapath
         parser = datapath.ofproto_parser
         ofproto = datapath.ofproto
-        from ryu.lib.packet import ethernet, packet as packet_lib
-        parsed = packet_lib.Packet(msg.data)
+        parsed = packet.Packet(msg.data)
         ethernet_header = parsed.get_protocol(ethernet.ethernet)
-        if ethernet_header is None:
+        if (
+            ethernet_header is None
+            or ethernet_header.ethertype == ether_types.ETH_TYPE_LLDP
+        ):
             return
 
         source = ethernet_header.src
@@ -258,8 +270,3 @@ class ChatQoSController(app_manager.RyuApp):
                 match=self.user_match(datapath, user),
             )
         )
-
-
-if __name__ == "__main__":
-    from ryu.cmd.manager import main
-    main()

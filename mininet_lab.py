@@ -54,7 +54,7 @@ def controller_ready():
                 pass
         except OSError as error:
             raise RuntimeError(
-                "Start the Ryu controller first; port "
+                "Start the OS-Ken controller first; port "
                 + str(port)
                 + " is unavailable"
             ) from error

@@ -1,4 +1,4 @@
-                       Ryu controller (host machine)
+                       OS-Ken controller (host machine)
                     OpenFlow TCP :6653 | Events TCP :6000
                                |                ^
                                |                | JSON lines
