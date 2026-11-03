@@ -1,7 +1,10 @@
+import base64
+import binascii
 import json
 import socket
 import threading
 
+from accounts import account_exists, register_account, verify_account
 from config import (
     CONTROLLER_EVENT_HOST,
     CONTROLLER_EVENT_PORT,
@@ -12,6 +15,9 @@ from config import (
 users = {}
 rooms = {}
 lock = threading.Lock()
+IDENTIFIER_CHARACTERS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
+)
 
 
 def send_line(conn, message):
@@ -46,52 +52,128 @@ def notify_controller(event, name, room, address):
         print("Controller event unavailable:", error)
 
 
+def valid_identifier(value):
+    return (
+        1 <= len(value) <= 32
+        and all(char in IDENTIFIER_CHARACTERS for char in value)
+    )
+
+
+def register_or_login(conn, name, text, command):
+    parts = text.split()
+    if command == "REGISTER":
+        if len(parts) == 2:
+            new_name, public_key = parts
+            password = None
+        elif len(parts) == 3:
+            new_name, password, public_key = parts
+        else:
+            send_line(conn, "ERR use REGISTER name [password] public_key")
+            return name, False
+    elif len(parts) == 3:
+        new_name, password, public_key = parts
+    else:
+        send_line(conn, "ERR use LOGIN name password public_key")
+        return name, False
+
+    if name:
+        send_line(conn, "ERR already authenticated")
+        return name, False
+    if not valid_identifier(new_name):
+        send_line(conn, "ERR name must be 1-32 letters, numbers, dots, dashes or underscores")
+        return name, False
+    if password is not None and (
+        len(password) < 8
+        or len(password) > 128
+        or any(char.isspace() for char in password)
+    ):
+        send_line(conn, "ERR password must be 8-128 characters with no spaces")
+        return name, False
+    try:
+        if len(base64.b64decode(public_key, validate=True)) != 32:
+            raise ValueError
+    except (ValueError, binascii.Error):
+        send_line(conn, "ERR invalid public key")
+        return name, False
+
+    try:
+        with lock:
+            if new_name in users:
+                send_line(conn, "ERR user is already online")
+                return name, False
+            if command == "REGISTER":
+                if password is None:
+                    if account_exists(new_name):
+                        send_line(conn, "ERR name is registered; use LOGIN")
+                        return name, False
+                elif not register_account(new_name, password):
+                    send_line(conn, "ERR account already exists; use LOGIN")
+                    return name, False
+            elif not verify_account(new_name, password):
+                send_line(conn, "ERR invalid username or password")
+                return name, False
+
+            other_users = [
+                (username, user["public_key"], user["conn"])
+                for username, user in users.items()
+            ]
+            users[new_name] = {
+                "conn": conn,
+                "room": "",
+                "public_key": public_key,
+            }
+    except (OSError, RuntimeError) as error:
+        print("Account storage error:", error)
+        send_line(conn, "ERR account service is unavailable")
+        return name, False
+
+    response = "OK registered as " if command == "REGISTER" else "OK logged in as "
+    send_line(conn, response + new_name)
+    notify_controller("register", new_name, "", conn.getpeername())
+    for username, peer_key, peer_conn in other_users:
+        send_line(conn, "KEY " + username + " " + peer_key)
+        send_line(peer_conn, "KEY " + new_name + " " + public_key)
+    return new_name, False
+
+
+def logout_user(conn, name):
+    with lock:
+        user = users.pop(name, None)
+        room = user["room"] if user else ""
+        if room:
+            rooms[room].discard(name)
+            if not rooms[room]:
+                del rooms[room]
+    if room:
+        for other in room_connections(room):
+            send_line(other, "* " + name + " left " + room)
+    if user:
+        notify_controller("leave", name, room, conn.getpeername())
+
+
 def handle_command(conn, name, line):
     command, separator, text = line.partition(" ")
 
-    if command == "REGISTER":
-        new_name, key_separator, public_key = text.partition(" ")
-        if (
-            not separator
-            or not new_name
-            or any(char.isspace() for char in new_name)
-            or not key_separator
-            or not public_key
-            or any(char.isspace() for char in public_key)
-        ):
-            send_line(conn, "ERR use REGISTER name public_key")
-            return name, False
-        if name:
-            send_line(conn, "ERR already registered")
-            return name, False
-        with lock:
-            taken = new_name in users
-            if not taken:
-                other_users = [
-                    (username, user["public_key"], user["conn"])
-                    for username, user in users.items()
-                ]
-                users[new_name] = {
-                    "conn": conn,
-                    "room": "",
-                    "public_key": public_key,
-                }
-        if taken:
-            send_line(conn, "ERR name is already taken")
-            return name, False
-        send_line(conn, "OK registered as " + new_name)
-        notify_controller("register", new_name, "", conn.getpeername())
-        for username, peer_key, peer_conn in other_users:
-            send_line(conn, "KEY " + username + " " + peer_key)
-            send_line(peer_conn, "KEY " + new_name + " " + public_key)
-        return new_name, False
+    if command in ("REGISTER", "LOGIN"):
+        return register_or_login(conn, name, text if separator else "", command)
 
     if command == "QUIT":
         send_line(conn, "OK bye")
         return name, True
 
+    if command == "LOGOUT":
+        if text.strip():
+            send_line(conn, "ERR LOGOUT does not take arguments")
+            return name, False
+        if not name:
+            send_line(conn, "ERR register or login first")
+            return name, False
+        send_line(conn, "OK logged out")
+        logout_user(conn, name)
+        return "", False
+
     if not name:
-        send_line(conn, "ERR register first")
+        send_line(conn, "ERR register or login first")
         return name, False
 
     if command == "JOIN":
@@ -175,18 +257,7 @@ def handle_client(conn, address):
         print("Client connection error:", error)
     finally:
         if name:
-            with lock:
-                user = users.pop(name, None)
-                room = user["room"] if user else ""
-                if room:
-                    rooms[room].discard(name)
-                    if not rooms[room]:
-                        del rooms[room]
-            if room:
-                for other in room_connections(room):
-                    send_line(other, "* " + name + " left " + room)
-            if user:
-                notify_controller("leave", name, room, address)
+            logout_user(conn, name)
         conn.close()
         print("Client disconnected:", address)
 

@@ -2,3 +2,5 @@ __pycache__/
 *.py[cod]
 .venv-sdn/
 results_pcaps/
+accounts.json
+accounts.json.tmp

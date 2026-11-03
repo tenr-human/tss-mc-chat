@@ -146,17 +146,6 @@ def main():
         lambda value: f"{value:.0f}",
     )
 
-    pcap_path = base.parent / (base.name + "_pcap_summary.csv")
-    if pcap_path.exists():
-        pcap_data = read_summary(pcap_path, "average_mbps")
-        make_chart(
-            pcap_data,
-            output_dir / "pcap_throughput.svg",
-            "Average captured throughput",
-            "Throughput (Mbps)",
-            lambda value: f"{value:.2f}",
-        )
-
 
 if __name__ == "__main__":
     main()

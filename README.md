@@ -6,10 +6,13 @@ users. The lab can also compare the network with and without the controller.
 
 ## What you need
 
-- Linux, Python 3, Mininet, Open vSwitch, and `iperf`
-- `sudo` access
-- `xterm` and a graphical display for the interactive lab
-- Optional: `tcpdump` and Wireshark to capture and view packets
+- Linux with Python 3, Mininet, Open vSwitch, and `iperf`.
+- `sudo` access for Mininet and OVS.
+- OS-Ken and the encrypted chat clients use the project-local Python 3.12
+  environment. The chat server and Mininet scripts use system `python3`.
+- The client uses the `cryptography` package for private-message encryption;
+  the setup script installs it in `.venv-sdn`.
+- `xterm` is only needed to open separate interactive client windows.
 
 ## Set up
 
@@ -22,24 +25,7 @@ source setup_osken_env.sh
 This sets up the local Python environment and installs the needed packages.
 The controller and chat client use this environment.
 
-## Run a chat
-
-Open two terminals in the project folder. Start the server in one:
-
-```sh
-python3 server.py
-```
-
-Start a client in the other:
-
-```sh
-./.venv-sdn/bin/python client.py 127.0.0.1
-```
-
-Follow the prompts to pick a name and room. You can send room messages or
-private messages from the menu.
-
-## Run the Mininet lab
+## Run the Mininet server lab
 
 Start the controller in one terminal:
 
@@ -51,39 +37,49 @@ Start the controller in one terminal:
 In another terminal, start the lab:
 
 ```sh
+service openvswitch start
 sudo mn -c
 sudo env PATH="$HOME/.local/bin:$PATH" \
   LD_LIBRARY_PATH="$HOME/.local/opt/xterm/usr/lib/x86_64-linux-gnu" \
   python3 mininet_lab.py lab --mode sdn
 ```
 
-The lab opens chat windows on h1, h2, and h3. Pick a different name in each
-window and join the same room. To run without OS-Ken, use:
+At the `mininet>` prompt, open the chat terminals yourself:
 
-```sh
-python3 mininet_lab.py lab --mode baseline
+```text
+xterm h1 h2 h3
 ```
 
-Type `exit` at the Mininet prompt when you are done. If a lab stops without
-cleaning up, run `sudo mn -c` before starting another one. Press **Ctrl+C** in
-the controller terminal to stop OS-Ken.
+The chat client starts automatically in each terminal. Choose a different
+account name in each window and join the same room. Type `exit` at the Mininet
+prompt to close the lab and its xterm windows.
+
+If a lab stops without cleaning up, run `sudo mn -c` before starting another
+one. Press **Ctrl+C** in the controller terminal to stop OS-Ken.
+
+When a chat window opens, choose register or login, then enter an account name
+and password. Passwords must be 8-128 characters with no spaces. The server
+saves salted scrypt password hashes in `accounts.json`(encrypted with `sudo` access), not the passwords.
+Choose **Log out** in the chat menu to sign out and return to the account
+prompt. Passwords travel over the lab's plain TCP connection, so do not reuse
+an important password. When the interactive Mininet lab exits, it clears all
+saved accounts so you can register them again next time.
 
 ## Private messages
 
 Choose **Send an encrypted private message**, then enter the other person's
 online name and your message. The clients encrypt and decrypt it; the server
-only forwards the encrypted text. In normal mode, compare the person's key
-fingerprint through another trusted method before trusting it.
+only forwards the encrypted text. The clients automatically use the peer's
+public key, so there is no separate key-trust step.
 
-For a local demo, start the server as shown above. Then run this command in
-two terminals and choose a different name in each:
+The clients use X25519 to agree on a shared secret, then HKDF-SHA256 derives an
+encryption key. ChaCha20-Poly1305 encrypts the message and checks that it has
+not been changed. The server only forwards the encrypted text.
 
-```sh
-./.venv-sdn/bin/python client.py 127.0.0.1 --crypto-demo
-```
-
-Demo mode automatically trusts the keys it receives. Use it only in a trusted
-lab. A malicious server could replace those keys.
+The xterm chat does not print public keys or fingerprints. Automatically using
+the server-provided key is convenient, but does not confirm the peer's identity:
+a malicious server could replace a key and read private messages. Use this
+mode only in a trusted network.
 
 ## Block a user
 
@@ -100,6 +96,11 @@ To see the switch rules, run:
 sudo ovs-ofctl -O OpenFlow13 dump-flows s1
 ```
 
+The output shows rules by priority. A user's normal chat rule has priority 100
+and sends their traffic through the chat queue. After blocking them, that rule
+is replaced with a priority 200 rule with no actions, so matching traffic is
+dropped. The rule matches the user's IP address and chat connection port.
+
 ## Measure the network
 
 1. Start the OS-Ken controller as described above. Close any other Mininet lab.
@@ -115,13 +116,21 @@ This tests both baseline and SDN, with and without an `iperf` flood. Add
 `--mode baseline` to test only the baseline. Use a new output name to keep
 previous results.
 
+To run baseline-only tests, no controller is needed. Clean up Mininet, then
+run:
+
+```sh
+sudo mn -c
+sudo python3 mininet_lab.py measure --mode baseline \
+  --clients 10 50 100 --runs 5 --output baseline_results.csv
+```
+
+This writes chat latency to `baseline_results.csv` and
+`baseline_results_summary.csv`.
+
 3. Check the results:
 
 - `results.csv` and `results_summary.csv` contain chat latency.
-- `results_pcap_results.csv` and `results_pcap_summary.csv` contain packet and
-  captured-link throughput.
-- `results_pcap_timeseries.csv` contains throughput by second.
-- PCAP captures are saved in `results_pcaps/`.
 
 4. Make graphs from the CSV files:
 
@@ -129,32 +138,48 @@ previous results.
 python3 generate_graphs.py
 ```
 
-This creates `results_graphs/chat_latency.svg`. If PCAP results exist, it also
-creates `results_graphs/pcap_throughput.svg`. Run it again after new tests to
-update the graphs. The chat latency graph below uses the saved summary data;
-run new tests after changing the network setup.
+This creates `results_graphs/chat_latency.svg`. Run it again after new tests to
+update the graph. The chat latency graph below uses the saved summary data; run
+new tests after changing the network setup.
 
 ![Chat latency for the saved baseline and SDN results](results_graphs/chat_latency.svg)
 
 In the saved results, SDN is faster in some cases and slower in others. Rerun
 the tests before drawing conclusions about the updated network setup.
 
-The PCAP measurements need `tcpdump` and `tshark`. Open a capture in Wireshark:
+## View traffic in Wireshark
 
-```sh
-wireshark results_pcaps/sdn_clients-50_flood-true_run-1_*.pcap
-```
+1. Start the controller for SDN, then start the Mininet lab in baseline or SDN
+   mode as described above.
+2. Open Wireshark and capture on `s1-eth4`, the switch port connected to the
+   chat server. Use this capture filter to keep chat and iperf traffic:
 
-Use `tcp.port == 5000 || tcp.port == 5001` to show chat and iperf traffic.
-Choose **Statistics → I/O Graphs** to view throughput over time. PCAPs show
-traffic; the CSV files contain the measured values. Captured-link throughput
-includes all packets on the chat server link, including iperf traffic when
-enabled. The saved latency data is from the current recorded runs; run new
-tests after changing the network setup.
+   ```text
+   tcp port 5000 or tcp port 5001
+   ```
+
+3. Send chat messages from the chat windows. To add an iperf flood, enter these
+   commands at the Mininet prompt:
+
+   ```text
+   h4 iperf -s -p 5001 &
+   h5 iperf -c 10.0.0.4 -p 5001 -t 30
+   ```
+
+4. Stop and save the capture  Repeat with and without the flood in both
+   baseline and SDN mode.
+5. In Wireshark, use the display filter `tcp.port == 5000 || tcp.port == 5001`.
+   Open **Statistics → I/O Graphs**, set the interval to one second, and select
+   **Bits/Tick** to see throughput. Divide the graph value by 1,000,000 to get
+   Mbps. Compare the four captures.
+
+The measurement command still records chat latency in the CSV files. Wireshark
+is used here to view and compare captured traffic manually.
 
 ## Main files
 
 - `server.py` and `client.py`: chat server and client
+- `accounts.py`: stores password hashes for saved accounts
 - `sdn/chat_qos_controller.py`: OS-Ken controller
 - `mininet_lab.py`: Mininet lab and measurement commands
 - `config.py`: network settings
@@ -189,5 +214,3 @@ flowchart TB
     note["Queue 1 prioritizes chat traffic to h4.<br/>Queue 0 carries other traffic, including iperf."]
     switch --- note
 ```
-
-See [network-diagram.md](docs/network-diagram.md) for the standalone diagram.
