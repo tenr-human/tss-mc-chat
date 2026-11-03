@@ -4,52 +4,52 @@
 <line class="grid" x1="82" y1="386.0" x2="752" y2="386.0"/>
 <text x="72" y="390.0" text-anchor="end" font-size="12">0</text>
 <line class="grid" x1="82" y1="321.2" x2="752" y2="321.2"/>
-<text x="72" y="325.2" text-anchor="end" font-size="12">241</text>
+<text x="72" y="325.2" text-anchor="end" font-size="12">117</text>
 <line class="grid" x1="82" y1="256.4" x2="752" y2="256.4"/>
-<text x="72" y="260.4" text-anchor="end" font-size="12">483</text>
+<text x="72" y="260.4" text-anchor="end" font-size="12">234</text>
 <line class="grid" x1="82" y1="191.6" x2="752" y2="191.6"/>
-<text x="72" y="195.6" text-anchor="end" font-size="12">724</text>
+<text x="72" y="195.6" text-anchor="end" font-size="12">351</text>
 <line class="grid" x1="82" y1="126.8" x2="752" y2="126.8"/>
-<text x="72" y="130.8" text-anchor="end" font-size="12">965</text>
+<text x="72" y="130.8" text-anchor="end" font-size="12">468</text>
 <line class="grid" x1="82" y1="62.0" x2="752" y2="62.0"/>
-<text x="72" y="66.0" text-anchor="end" font-size="12">1206</text>
+<text x="72" y="66.0" text-anchor="end" font-size="12">585</text>
 <line class="axis" x1="82" y1="62" x2="82" y2="386"/>
 <line class="axis" x1="82" y1="386" x2="752" y2="386"/>
 <text x="20" y="224.0" text-anchor="middle" font-size="13" transform="rotate(-90 20 224.0)">Latency (ms)</text>
-<rect class="bar" x="104.1" y="374.2" width="31.3" height="11.8" fill="#4c78a8"/>
-<text x="119.7" y="369.2" text-anchor="middle" font-size="11">44</text>
-<rect class="bar" x="140.3" y="373.7" width="31.3" height="12.3" fill="#f58518"/>
-<text x="156.0" y="368.7" text-anchor="middle" font-size="11">46</text>
+<rect class="bar" x="104.1" y="362.3" width="31.3" height="23.7" fill="#4c78a8"/>
+<text x="119.7" y="357.3" text-anchor="middle" font-size="11">43</text>
+<rect class="bar" x="140.3" y="362.1" width="31.3" height="23.9" fill="#f58518"/>
+<text x="156.0" y="357.1" text-anchor="middle" font-size="11">43</text>
 <text x="137.8" y="408" text-anchor="middle" font-size="12">10 clients</text>
 <text x="137.8" y="426" text-anchor="middle" font-size="12">No flood</text>
-<rect class="bar" x="215.7" y="362.3" width="31.3" height="23.7" fill="#4c78a8"/>
-<text x="231.4" y="357.3" text-anchor="middle" font-size="11">88</text>
-<rect class="bar" x="252.0" y="368.4" width="31.3" height="17.6" fill="#f58518"/>
-<text x="267.6" y="363.4" text-anchor="middle" font-size="11">66</text>
+<rect class="bar" x="215.7" y="320.7" width="31.3" height="65.3" fill="#4c78a8"/>
+<text x="231.4" y="315.7" text-anchor="middle" font-size="11">118</text>
+<rect class="bar" x="252.0" y="356.5" width="31.3" height="29.5" fill="#f58518"/>
+<text x="267.6" y="351.5" text-anchor="middle" font-size="11">53</text>
 <text x="249.5" y="408" text-anchor="middle" font-size="12">10 clients</text>
 <text x="249.5" y="426" text-anchor="middle" font-size="12">With flood</text>
-<rect class="bar" x="327.4" y="354.3" width="31.3" height="31.7" fill="#4c78a8"/>
-<text x="343.0" y="349.3" text-anchor="middle" font-size="11">118</text>
-<rect class="bar" x="363.7" y="351.1" width="31.3" height="34.9" fill="#f58518"/>
-<text x="379.3" y="346.1" text-anchor="middle" font-size="11">130</text>
+<rect class="bar" x="327.4" y="314.5" width="31.3" height="71.5" fill="#4c78a8"/>
+<text x="343.0" y="309.5" text-anchor="middle" font-size="11">129</text>
+<rect class="bar" x="363.7" y="313.3" width="31.3" height="72.7" fill="#f58518"/>
+<text x="379.3" y="308.3" text-anchor="middle" font-size="11">131</text>
 <text x="361.2" y="408" text-anchor="middle" font-size="12">50 clients</text>
 <text x="361.2" y="426" text-anchor="middle" font-size="12">No flood</text>
-<rect class="bar" x="439.1" y="291.4" width="31.3" height="94.6" fill="#4c78a8"/>
-<text x="454.7" y="286.4" text-anchor="middle" font-size="11">352</text>
-<rect class="bar" x="475.3" y="295.2" width="31.3" height="90.8" fill="#f58518"/>
-<text x="491.0" y="290.2" text-anchor="middle" font-size="11">338</text>
+<rect class="bar" x="439.1" y="285.9" width="31.3" height="100.1" fill="#4c78a8"/>
+<text x="454.7" y="280.9" text-anchor="middle" font-size="11">181</text>
+<rect class="bar" x="475.3" y="301.5" width="31.3" height="84.5" fill="#f58518"/>
+<text x="491.0" y="296.5" text-anchor="middle" font-size="11">153</text>
 <text x="472.8" y="408" text-anchor="middle" font-size="12">50 clients</text>
 <text x="472.8" y="426" text-anchor="middle" font-size="12">With flood</text>
-<rect class="bar" x="550.7" y="219.4" width="31.3" height="166.6" fill="#4c78a8"/>
-<text x="566.4" y="214.4" text-anchor="middle" font-size="11">620</text>
-<rect class="bar" x="587.0" y="232.2" width="31.3" height="153.8" fill="#f58518"/>
-<text x="602.6" y="227.2" text-anchor="middle" font-size="11">573</text>
+<rect class="bar" x="550.7" y="167.6" width="31.3" height="218.4" fill="#4c78a8"/>
+<text x="566.4" y="162.6" text-anchor="middle" font-size="11">395</text>
+<rect class="bar" x="587.0" y="159.6" width="31.3" height="226.4" fill="#f58518"/>
+<text x="602.6" y="154.6" text-anchor="middle" font-size="11">409</text>
 <text x="584.5" y="408" text-anchor="middle" font-size="12">100 clients</text>
 <text x="584.5" y="426" text-anchor="middle" font-size="12">No flood</text>
-<rect class="bar" x="662.4" y="193.7" width="31.3" height="192.3" fill="#4c78a8"/>
-<text x="678.0" y="188.7" text-anchor="middle" font-size="11">716</text>
-<rect class="bar" x="698.7" y="104.3" width="31.3" height="281.7" fill="#f58518"/>
-<text x="714.3" y="99.3" text-anchor="middle" font-size="11">1049</text>
+<rect class="bar" x="662.4" y="104.3" width="31.3" height="281.7" fill="#4c78a8"/>
+<text x="678.0" y="99.3" text-anchor="middle" font-size="11">509</text>
+<rect class="bar" x="698.7" y="138.6" width="31.3" height="247.4" fill="#f58518"/>
+<text x="714.3" y="133.6" text-anchor="middle" font-size="11">447</text>
 <text x="696.2" y="408" text-anchor="middle" font-size="12">100 clients</text>
 <text x="696.2" y="426" text-anchor="middle" font-size="12">With flood</text>
 <rect x="312.0" y="445" width="14" height="14" fill="#4c78a8"/>
