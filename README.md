@@ -6,12 +6,17 @@ users. The lab can also compare the network with and without the controller.
 
 ## What you need
 
-- Linux with Python 3, Mininet, Open vSwitch, and `iperf`.
+- Tested versions:
+  - Linux (Ubuntu recommended)
+  - Python 3.14.8 for the server and Mininet; Python 3.12.16 for OS-Ken and
+    the chat clients
+  - Mininet 2.3.1b4 and Open vSwitch 3.6.2
+  - `iperf` 2.2.1 and `xterm` 411
+  - OS-Ken 4.2.2, Eventlet 0.41.3, and cryptography 50.0.2
+  - `uv` 0.13.7 for setup
 - `sudo` access for Mininet and OVS.
-- OS-Ken and the encrypted chat clients use the project-local Python 3.12
-  environment. The chat server and Mininet scripts use system `python3`.
-- The client uses the `cryptography` package for private-message encryption;
-  the setup script installs it in `.venv-sdn`.
+- The setup script installs the Python environment and pinned packages in
+  `.venv-sdn`.
 - `xterm` is only needed to open separate interactive client windows.
 
 ## Set up
@@ -30,8 +35,7 @@ The controller and chat client use this environment.
 Start the controller in one terminal:
 
 ```sh
-./.venv-sdn/bin/osken-manager --ofp-tcp-listen-port 6653 \
-  sdn/chat_qos_controller.py
+./.venv-sdn/bin/python sdn/run_controller.py --ofp-tcp-listen-port 6653
 ```
 
 In another terminal, start the lab:
@@ -188,6 +192,7 @@ is used here to view and compare captured traffic manually.
 - `server.py` and `client.py`: chat server and client
 - `accounts.py`: stores password hashes for saved accounts
 - `sdn/chat_qos_controller.py`: OS-Ken controller
+- `sdn/run_controller.py`: starts the OS-Ken controller
 - `mininet_lab.py`: Mininet lab and measurement commands
 - `config.py`: network settings
 - `setup_osken_env.sh`: environment setup
