@@ -1,6 +1,7 @@
 import base64
 import binascii
 import getpass
+import hashlib
 import os
 import readline
 import socket
@@ -28,8 +29,12 @@ console_input_prompt = ""
 deferred_output = []
 registration_reply = threading.Event()
 join_reply = threading.Event()
+leave_reply = threading.Event()
 logout_reply = threading.Event()
 public_keys = {}
+trusted_keys = {}
+pending_pm_requests = []
+send_lock = threading.Lock()
 private_key = X25519PrivateKey.generate()
 public_key_bytes = private_key.public_key().public_bytes(
     Encoding.Raw, PublicFormat.Raw
@@ -117,6 +122,10 @@ def decode_base64(value):
     return base64.b64decode(value, validate=True)
 
 
+def key_fingerprint(key_bytes):
+    return hashlib.sha256(key_bytes).hexdigest()
+
+
 def session_key_for(sender, recipient, peer_public_key):
     shared_secret = private_key.exchange(
         X25519PublicKey.from_public_bytes(peer_public_key)
@@ -169,9 +178,78 @@ def receive_public_key(line):
     with state_lock:
         previous_key = public_keys.get(peer)
         public_keys[peer] = peer_key
+        if previous_key and previous_key != peer_key:
+            trusted_keys.pop(peer, None)
     if previous_key and previous_key != peer_key:
         return color("WARNING: " + peer + "'s encryption key changed.", "31")
     return ""
+
+
+def receive_private_message_request(sock, line):
+    parts = line.split(" ", 3)
+    if len(parts) != 4:
+        return color("ERR malformed private-message request", "31")
+    _, request_id, sender, encoded_key = parts
+    try:
+        peer_key = decode_base64(encoded_key)
+        X25519PublicKey.from_public_bytes(peer_key)
+    except (ValueError, binascii.Error):
+        send_line(sock, "PM_DECISION " + request_id + " no")
+        return color("ERR invalid public key for " + sender, "31")
+
+    fingerprint = key_fingerprint(peer_key)
+    with state_lock:
+        previous_key = public_keys.get(sender)
+        public_keys[sender] = peer_key
+        if previous_key and previous_key != peer_key:
+            trusted_keys.pop(sender, None)
+        already_trusted = trusted_keys.get(sender) == fingerprint
+        if not already_trusted:
+            pending_pm_requests.append(
+                (request_id, sender, peer_key, fingerprint)
+            )
+    if already_trusted:
+        send_line(sock, "PM_DECISION " + request_id + " yes")
+        return ""
+    return ""
+
+
+def approve_pending_private_messages(sock):
+    while True:
+        with state_lock:
+            if not pending_pm_requests:
+                return
+            request_id, sender, peer_key, fingerprint = pending_pm_requests.pop(0)
+            current_key = public_keys.get(sender)
+            already_trusted = trusted_keys.get(sender) == fingerprint
+        if current_key != peer_key:
+            send_line(sock, "PM_DECISION " + request_id + " no")
+            console_print(color(
+                "Declined the request because " + sender + "'s key changed.",
+                "31",
+            ))
+            continue
+        if already_trusted:
+            send_line(sock, "PM_DECISION " + request_id + " yes")
+            continue
+
+        answer = console_input(
+            "Do you trust this user? " + sender
+            + " has sent you a private message.\nAccept? [y/N]: "
+        ).strip().lower()
+        accepted = answer in ("y", "yes")
+        if accepted:
+            with state_lock:
+                if public_keys.get(sender) == peer_key:
+                    trusted_keys[sender] = fingerprint
+                else:
+                    accepted = False
+        send_line(
+            sock,
+            "PM_DECISION " + request_id + (" yes" if accepted else " no"),
+        )
+        if not accepted:
+            console_print("Private message request declined.")
 
 
 def receive_private_message(line):
@@ -238,10 +316,14 @@ def receive_messages(sock):
                     name = line[len("OK logged in as "):]
                 elif line.startswith("OK joined "):
                     room = line[len("OK joined "):]
+                elif line.startswith("OK left "):
+                    room = ""
                 elif line == "OK logged out":
                     name = ""
                     room = ""
                     public_keys.clear()
+                    trusted_keys.clear()
+                    pending_pm_requests.clear()
             if (
                 line.startswith("OK registered as ")
                 or line.startswith("OK logged in as ")
@@ -250,12 +332,35 @@ def receive_messages(sock):
                 registration_reply.set()
             if line.startswith("OK joined ") or line.startswith("ERR "):
                 join_reply.set()
+            if line.startswith("OK left ") or line.startswith("ERR "):
+                leave_reply.set()
             if line == "OK logged out" or line.startswith("ERR "):
                 logout_reply.set()
             if line.startswith("KEY "):
                 line = receive_public_key(line)
+            elif line.startswith("PM_REQUEST "):
+                line = receive_private_message_request(sock, line)
+            elif line.startswith("PM_CANCEL "):
+                _, request_id = line.split(" ", 1)
+                with state_lock:
+                    pending_pm_requests[:] = [
+                        request for request in pending_pm_requests
+                        if request[0] != request_id
+                    ]
+                line = "Private message request expired or was cancelled."
             elif line.startswith("PMFROM "):
                 line = receive_private_message(line)
+            elif line.startswith("PM_PENDING "):
+                _, _, recipient = line.split(" ", 2)
+                line = "Private message request sent to " + recipient + "."
+            elif line.startswith("PM_RESULT "):
+                _, _, result = line.split(" ", 2)
+                if result == "accepted":
+                    line = "Your private message was accepted and delivered."
+                elif result == "declined":
+                    line = "Your private message was declined."
+                else:
+                    line = "Your private message request expired or was cancelled."
             elif line.startswith("OK registered as "):
                 line = "Signed in as " + line[len("OK registered as "):] + "."
             elif line.startswith("OK logged in as "):
@@ -264,10 +369,10 @@ def receive_messages(sock):
                 line = "Logged out."
             elif line.startswith("OK joined "):
                 line = "Joined room #" + line[len("OK joined "):] + "."
+            elif line.startswith("OK left "):
+                line = "Left room #" + line[len("OK left "):] + "."
             elif line == "OK message sent":
                 line = "Room message sent."
-            elif line == "OK private message sent":
-                line = "Private message sent securely."
             elif line.startswith("ERR "):
                 line = color("Error: " + line[len("ERR "):], "31")
             if line:
@@ -275,7 +380,8 @@ def receive_messages(sock):
 
 
 def send_line(sock, message):
-    sock.sendall((message + "\n").encode())
+    with send_lock:
+        sock.sendall((message + "\n").encode())
 
 
 def main():
@@ -335,41 +441,39 @@ def main():
                     if not registered:
                         continue
 
+                approve_pending_private_messages(sock)
                 with state_lock:
                     joined = bool(room)
-                if not joined:
-                    room_name = console_input(
-                        "Choose a room name (for example, room1): "
-                    ).strip()
-                    if not room_name:
-                        console_print("A room name is required. Please try again.")
-                        continue
-                    join_reply.clear()
-                    send_line(sock, "JOIN " + room_name)
-                    if not join_reply.wait(timeout=5):
-                        console_print(color(
-                            "No response while joining the room. Try again.",
-                            "31",
-                        ))
-                        continue
-                    with state_lock:
-                        joined = bool(room)
-                    if not joined:
-                        continue
-
-                with state_lock:
                     current_name = name
                     current_room = room
-                console_print(
-                    "\n=== " + current_name + " | room #" + current_room + " ===\n"
-                    "1) Send a message to this room\n"
-                    "2) Send an encrypted private message\n"
-                    "3) Switch to another room\n"
-                    "4) Log out\n"
-                    "5) Quit"
-                )
-                choice = console_input("Select an action [1-5]: ").strip()
-                if choice == "1":
+                if joined:
+                    console_print(
+                        "\n=== " + current_name + " | room #" + current_room + " ===\n"
+                        "1) Send a message to this room\n"
+                        "2) Send an encrypted private message\n"
+                        "3) Switch rooms\n"
+                        "4) Leave this room\n"
+                        "5) Log out\n"
+                        "6) Quit"
+                    )
+                    choice = console_input("Select an action [1-6]: ").strip()
+                else:
+                    console_print(
+                        "\n=== " + current_name + " | no room ===\n"
+                        "1) Join a room\n"
+                        "2) Send an encrypted private message\n"
+                        "3) Log out\n"
+                        "4) Quit"
+                    )
+                    choice = console_input("Select an action [1-4]: ").strip()
+
+                with state_lock:
+                    has_pending_pm_requests = bool(pending_pm_requests)
+                if has_pending_pm_requests:
+                    approve_pending_private_messages(sock)
+                    continue
+
+                if joined and choice == "1":
                     message = console_input(
                         "Room message (leave blank to cancel): "
                     ).strip()
@@ -393,32 +497,36 @@ def main():
                         send_private_message(sock, recipient, message)
                     else:
                         console_print("Private message cancelled.")
-                elif choice == "3":
+                elif (joined and choice == "3") or (not joined and choice == "1"):
                     room_name = console_input(
-                        "New room name (leave blank to stay in #"
-                        + current_room + "): "
+                        "Room name (leave blank to cancel): "
                     ).strip()
                     if room_name:
                         join_reply.clear()
                         send_line(sock, "JOIN " + room_name)
                         if not join_reply.wait(timeout=5):
                             console_print(color(
-                                "No response while switching rooms. Try again.",
+                                "No response while joining the room. Try again.",
                                 "31",
                             ))
                     else:
-                        console_print("Room switch cancelled.")
-                elif choice == "4":
+                        console_print("Join cancelled.")
+                elif joined and choice == "4":
+                    leave_reply.clear()
+                    send_line(sock, "LEAVE")
+                    if not leave_reply.wait(timeout=5):
+                        console_print(color("No response while leaving the room.", "31"))
+                elif (joined and choice == "5") or (not joined and choice == "3"):
                     logout_reply.clear()
                     send_line(sock, "LOGOUT")
                     if not logout_reply.wait(timeout=5):
                         console_print(color("No response to logout.", "31"))
                     continue
-                elif choice == "5":
+                elif (joined and choice == "6") or (not joined and choice == "4"):
                     send_line(sock, "QUIT")
                     break
                 else:
-                    console_print("Enter a number from 1 to 5.")
+                    console_print("Invalid menu choice.")
             except EOFError:
                 send_line(sock, "QUIT")
                 break

@@ -187,6 +187,12 @@ class ChatQoSController(app_manager.OSKenApp):
         action = data.get("event", "")
         if action in ("register", "join"):
             self.users[username] = data
+            if action == "register" and data.get("public_key"):
+                self.logger.info(
+                    "User public key: user=%s public_key=%s",
+                    username,
+                    data["public_key"],
+                )
             if action == "join":
                 for datapath in self.datapaths.values():
                     self.install_user_flow(
@@ -207,6 +213,16 @@ class ChatQoSController(app_manager.OSKenApp):
                     self.install_user_flow(
                         datapath, user, username in self.blocked_users
                     )
+        elif action == "pm_trust":
+            self.logger.info(
+                "PM trust: sender=%s recipient=%s verified=%s "
+                "sender_public_key=%s recipient_public_key=%s",
+                data.get("sender", ""),
+                data.get("recipient", username),
+                str(data.get("verified", False)).lower(),
+                data.get("sender_public_key", ""),
+                data.get("recipient_public_key", ""),
+            )
         self.logger.info(
             "Chat event: %s user=%s room=%s",
             action,

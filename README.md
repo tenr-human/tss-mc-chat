@@ -54,6 +54,9 @@ The chat client starts automatically in each terminal. Choose a different
 account name in each window and join the same room. Type `exit` at the Mininet
 prompt to close the lab and its xterm windows.
 
+In the chat menu, choose **Leave this room** to stay signed in without being
+in a room. You can join a room again from the no-room menu.
+
 If a lab stops without cleaning up, run `sudo mn -c` before starting another
 one. Press **Ctrl+C** in the controller terminal to stop OS-Ken.
 
@@ -69,17 +72,21 @@ saved accounts so you can register them again next time.
 
 Choose **Send an encrypted private message**, then enter the other person's
 online name and your message. The clients encrypt and decrypt it; the server
-only forwards the encrypted text. The clients automatically use the peer's
-public key, so there is no separate key-trust step.
+only forwards the encrypted text. Before delivering a private message, the
+recipient is asked whether they trust the sender. Chat windows do not display
+public keys or fingerprints. If accepted, that key is trusted for the rest of
+the session; a changed key asks for trust again. Declining prevents delivery.
+The controller log shows users' public keys and each PM trust decision.
+`verified=true` means the recipient accepted the sender's key; it does not
+mean the controller confirmed the sender's identity.
 
 The clients use X25519 to agree on a shared secret, then HKDF-SHA256 derives an
 encryption key. ChaCha20-Poly1305 encrypts the message and checks that it has
 not been changed. The server only forwards the encrypted text.
 
-The xterm chat does not print public keys or fingerprints. Automatically using
-the server-provided key is convenient, but does not confirm the peer's identity:
-a malicious server could replace a key and read private messages. Use this
-mode only in a trusted network.
+The server relays messages and supplies public keys, so a malicious server
+could replace a key. Accept only if you trust the sender; the chat prompt does
+not let you compare their fingerprint.
 
 ## Block a user
 
