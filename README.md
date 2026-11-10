@@ -66,7 +66,7 @@ one. Press **Ctrl+C** in the controller terminal to stop OS-Ken.
 
 When a chat window opens, choose register or login, then enter an account name
 and password. Passwords must be 8-128 characters with no spaces. The server
-saves salted scrypt password hashes in `accounts.json`(encrypted with `sudo` access), not the passwords.
+saves salted scrypt password hashes in `accounts.json` (encrypted with `sudo` access), not the passwords.
 Choose **Log out** in the chat menu to sign out and return to the account
 prompt. Passwords travel over the lab's plain TCP connection, so do not reuse
 an important password. When the interactive Mininet lab exits, it clears all
@@ -75,12 +75,14 @@ saved accounts so you can register them again next time.
 ## Private messages
 
 Choose **Send an encrypted private message**, then enter the other person's
-online name and your message. The clients encrypt and decrypt it; the server
-only forwards the encrypted text. Before delivering a private message, the
-recipient is asked whether they trust the sender. Chat windows do not display
-public keys or fingerprints. If accepted, that key is trusted for the rest of
-the session; a changed key asks for trust again. Declining prevents delivery.
-The controller log shows users' public keys and each PM trust decision.
+online name and your message. 
+
+The clients encrypt and decrypt it; the serveronly forwards the encrypted text. Before delivering a private message, the
+ recipient is asked whether they trust the sender. 
+
+Chat windows do not displaypublic keys or fingerprints. If accepted, that keythe session; a changed key asks for trust again. Declining prevents delivery.
+  The controller log shows users' public keys and each PM trust decision.
+
 `verified=true` means the recipient accepted the sender's key; it does not
 mean the controller confirmed the sender's identity.
 
@@ -128,12 +130,11 @@ This tests both baseline and SDN, with and without an `iperf` flood. Add
 previous results.
 
 To run baseline-only tests, no controller is needed. Clean up Mininet, then
-run:
+ run:
 
 ```sh
-sudo mn -c
-sudo python3 mininet_lab.py measure --mode baseline \
-  --clients 10 50 100 --runs 5 --output baseline_results.csv
+sudo mn -crudo python3 mininet_lab.py measure --mode baseline \
+   --clients 10 50 100 --runs 5 --output baseline_results.csv
 ```
 
 This writes chat latency to `baseline_results.csv` and
